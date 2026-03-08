@@ -20,9 +20,8 @@ pub fn main() !void {
     const dpy = c.XOpenDisplay(null).?;
     defer _ = c.XCloseDisplay(dpy);
 
-    std.debug.print("{s}\n", .{std.os.argv[1]});
-
-    const msg = "Something";
+    const arg = std.os.argv[1];
+    const msg = std.mem.span(arg);
 
     try setRoot(dpy, msg);
 }

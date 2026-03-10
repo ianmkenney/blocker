@@ -1,0 +1,7 @@
+#+TITLE: Blocker
+
+A simple block based updater for the X11 root window name.
+
+* Building
+
+Blocker is currently written with zig 0.15.2 and is built with =zig build=.

@@ -4,7 +4,17 @@ const c = @cImport({
     @cInclude("X11/Xlib.h");
 });
 
-const Block = struct { cmd: []const []const u8 };
+const Block = struct {
+    cmd: []const []const u8,
+    interval: u8,
+    allocator: std.mem.Allocator,
+    pub fn execute(self: *Block) void {
+        _ = self;
+    }
+    pub fn init(cmd: []const []const u8, allocator: std.mem.Allocator) Block {
+        return .{ .cmd = cmd, .interval = 5, .allocator = allocator };
+    }
+};
 
 fn setRoot(dpy: *c.Display, msg: []const u8) !void {
     const screen = c.DefaultScreen(dpy);
@@ -12,6 +22,7 @@ fn setRoot(dpy: *c.Display, msg: []const u8) !void {
 
     const allocator = std.heap.page_allocator;
     var buff = try allocator.alloc(u8, msg.len + 1);
+    defer allocator.free(buff);
 
     @memcpy(buff[0..msg.len], msg[0..msg.len]);
     buff[msg.len] = 0;
@@ -40,13 +51,32 @@ fn execute_block(blk: Block, buffer: []u8) !usize {
 }
 
 pub fn main() !void {
-    const blk: Block = .{ .cmd = &[_][]const u8{"date"} };
+    const palloc = std.heap.page_allocator;
 
-    var buffer: [256]u8 = .{0} ** 256;
-    const length = try execute_block(blk, &buffer);
+    const blks = [_]Block{
+        .init(&[_][]const u8{"date"}, palloc),
+        .init(&[_][]const u8{ "acpi", "-b" }, palloc),
+        .init(&[_][]const u8{ "acpi", "-t" }, palloc),
+    };
 
-    const dpy = c.XOpenDisplay(null).?;
-    defer _ = c.XCloseDisplay(dpy);
+    while (true) {
+        var output: std.ArrayList(u8) = .empty;
+        defer output.deinit(palloc);
 
-    try setRoot(dpy, buffer[0..length]);
+        var buffer: [256]u8 = .{0} ** 256;
+        for (blks, 0..) |blk, i| {
+            const length = try execute_block(blk, &buffer);
+            try output.appendSlice(palloc, buffer[0..length :0]);
+            if (i != blks.len - 1) {
+                try output.appendSlice(palloc, " | ");
+            } else {
+                try output.appendSlice(palloc, " ");
+            }
+        }
+
+        const dpy = c.XOpenDisplay(null).?;
+        try setRoot(dpy, output.items);
+        _ = c.XCloseDisplay(dpy);
+        std.Thread.sleep(5 * std.time.ns_per_s);
+    }
 }

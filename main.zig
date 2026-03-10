@@ -4,15 +4,27 @@ const c = @cImport({
     @cInclude("X11/Xlib.h");
 });
 
-const Block = struct {
+const Executable = union(enum) {
     cmd: []const []const u8,
+    func: *const fn ([]u8) usize,
+};
+
+fn blocker_example(buffer: []u8) usize {
+    const name = "Blocker example";
+    @memcpy(buffer[0..name.len], name);
+    buffer[name.len] = 0;
+    return name.len;
+}
+
+const Block = struct {
+    exec: Executable,
     interval: u8,
     allocator: std.mem.Allocator,
     pub fn execute(self: *Block) void {
         _ = self;
     }
-    pub fn init(cmd: []const []const u8, allocator: std.mem.Allocator) Block {
-        return .{ .cmd = cmd, .interval = 5, .allocator = allocator };
+    pub fn init(exec: Executable, allocator: std.mem.Allocator) Block {
+        return .{ .exec = exec, .interval = 5, .allocator = allocator };
     }
 };
 
@@ -33,30 +45,39 @@ fn setRoot(dpy: *c.Display, msg: []const u8) !void {
 fn execute_block(blk: Block, buffer: []u8) !usize {
     const allocator = std.heap.page_allocator;
 
-    var child: std.process.Child = .init(blk.cmd, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
+    switch (blk.exec) {
+        .cmd => |cmd| {
+            var child: std.process.Child = .init(cmd, allocator);
+            child.stdout_behavior = .Pipe;
+            child.stderr_behavior = .Pipe;
+            try child.spawn();
 
-    var stdout: std.ArrayList(u8) = .empty;
-    defer stdout.deinit(allocator);
-    var stderr: std.ArrayList(u8) = .empty;
-    defer stderr.deinit(allocator);
+            var stdout: std.ArrayList(u8) = .empty;
+            defer stdout.deinit(allocator);
+            var stderr: std.ArrayList(u8) = .empty;
+            defer stderr.deinit(allocator);
 
-    try std.process.Child.collectOutput(child, allocator, &stdout, &stderr, 2048);
-    _ = try child.wait();
-    @memcpy(buffer[0..stdout.items.len], stdout.items);
-    buffer[stdout.items.len - 1] = 0;
-    return stdout.items.len - 1;
+            try std.process.Child.collectOutput(child, allocator, &stdout, &stderr, 2048);
+            _ = try child.wait();
+            @memcpy(buffer[0..stdout.items.len], stdout.items);
+            buffer[stdout.items.len - 1] = 0;
+            return stdout.items.len - 1;
+        },
+        .func => |func| {
+            const length = func(buffer);
+            return length;
+        },
+    }
 }
 
 pub fn main() !void {
     const palloc = std.heap.page_allocator;
 
     const blks = [_]Block{
-        .init(&[_][]const u8{"date"}, palloc),
-        .init(&[_][]const u8{ "acpi", "-b" }, palloc),
-        .init(&[_][]const u8{ "acpi", "-t" }, palloc),
+        .init(.{ .cmd = &[_][]const u8{"date"} }, palloc),
+        .init(.{ .cmd = &[_][]const u8{ "acpi", "-b" } }, palloc),
+        .init(.{ .cmd = &[_][]const u8{ "acpi", "-t" } }, palloc),
+        .init(.{ .func = blocker_example }, palloc),
     };
 
     while (true) {

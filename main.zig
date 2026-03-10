@@ -79,11 +79,9 @@ pub fn main() !void {
         .init(.{ .cmd = &[_][]const u8{ "acpi", "-t" } }, palloc),
         .init(.{ .func = blocker_example }, palloc),
     };
-
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(palloc);
     while (true) {
-        var output: std.ArrayList(u8) = .empty;
-        defer output.deinit(palloc);
-
         var buffer: [256]u8 = .{0} ** 256;
         for (blks, 0..) |blk, i| {
             const length = try execute_block(blk, &buffer);
@@ -98,6 +96,7 @@ pub fn main() !void {
         const dpy = c.XOpenDisplay(null).?;
         try setRoot(dpy, output.items);
         _ = c.XCloseDisplay(dpy);
+        output.clearRetainingCapacity();
         std.Thread.sleep(5 * std.time.ns_per_s);
     }
 }

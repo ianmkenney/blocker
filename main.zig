@@ -6,25 +6,25 @@ const c = @cImport({
 
 const Executable = union(enum) {
     cmd: []const []const u8,
-    func: *const fn ([]u8, std.mem.Allocator) usize,
+    func: *const fn (*std.ArrayList(u8), std.mem.Allocator) error{OutOfMemory}!void,
 };
 
-fn blocker_example(buffer: []u8, allocator: std.mem.Allocator) usize {
-    _ = allocator;
+fn blocker_example(output: *std.ArrayList(u8), allocator: std.mem.Allocator) !void {
     const name = "Blocker example";
-    @memcpy(buffer[0..name.len], name);
-    buffer[name.len] = 0;
-    return name.len;
+    try output.appendSlice(allocator, name);
 }
 
 const Block = struct {
     exec: Executable,
+    output: std.ArrayList(u8),
+    allocator: std.mem.Allocator = std.heap.page_allocator,
 
     pub fn execute(
-        self: Block,
-        buffer: []u8,
+        self: *Block,
         allocator: std.mem.Allocator,
-    ) !usize {
+    ) !void {
+        self.output.clearAndFree(self.allocator);
+
         switch (self.exec) {
             .cmd => |cmd| {
                 var stdout_capture: std.ArrayList(u8) = .empty;
@@ -40,22 +40,20 @@ const Block = struct {
                 try std.process.Child.collectOutput(child, allocator, &stdout_capture, &stderr_capture, 2048);
                 _ = try child.wait();
 
-                @memcpy(buffer[0..stdout_capture.items.len], stdout_capture.items);
-                if (buffer[stdout_capture.items.len - 1] == '\n') {
-                    buffer[stdout_capture.items.len - 1] = 0;
+                try self.output.appendSlice(self.allocator, stdout_capture.items);
+                if (self.output.getLast() == '\n') {
+                    _ = self.output.pop();
                 }
-
-                return stdout_capture.items.len - 1;
             },
             .func => |func| {
-                const length = func(buffer, allocator);
-                return length;
+                try func(&self.output, allocator);
             },
         }
     }
 
-    pub fn init(exec: Executable) Block {
-        return Block{ .exec = exec };
+    pub fn init(exec: Executable) @This() {
+        const output: std.ArrayList(u8) = .empty;
+        return Block{ .exec = exec, .output = output };
     }
 };
 
@@ -76,7 +74,7 @@ fn setRoot(dpy: *c.Display, msg: []const u8) !void {
 pub fn main() !void {
     const palloc = std.heap.page_allocator;
 
-    const blks = [_]Block{
+    var blks = [_]Block{
         .init(.{ .cmd = &.{"date"} }),
         .init(.{ .cmd = &.{ "acpi", "-b" } }),
         .init(.{ .cmd = &.{ "acpi", "-t" } }),
@@ -86,11 +84,10 @@ pub fn main() !void {
     var output: std.ArrayList(u8) = .empty;
     defer output.deinit(palloc);
 
-    var buffer: [256]u8 = .{0} ** 256;
     while (true) {
-        for (blks, 0..) |blk, i| {
-            const length = try blk.execute(&buffer, palloc);
-            try output.appendSlice(palloc, buffer[0..length :0]);
+        for (&blks, 0..) |*blk, i| {
+            try blk.execute(palloc);
+            try output.appendSlice(palloc, blk.output.items);
             if (i != blks.len - 1) {
                 try output.appendSlice(palloc, " | ");
             } else {

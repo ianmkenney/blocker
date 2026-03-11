@@ -57,18 +57,15 @@ const Block = struct {
     }
 };
 
-fn setRoot(dpy: *c.Display, msg: []const u8) !void {
+fn setRoot(dpy: *c.Display, msg: [:0]const u8) !void {
     const screen = c.DefaultScreen(dpy);
     const root = c.RootWindow(dpy, screen);
 
-    const allocator = std.heap.page_allocator;
-    var buff = try allocator.alloc(u8, msg.len + 1);
-    defer allocator.free(buff);
-
-    @memcpy(buff[0..msg.len], msg[0..msg.len]);
-    buff[msg.len] = 0;
-
-    _ = c.XStoreName(dpy, root, buff[0..msg.len :0]);
+    _ = c.XStoreName(
+        dpy,
+        root,
+        msg,
+    );
 }
 
 pub fn main() !void {
@@ -96,7 +93,7 @@ pub fn main() !void {
         }
 
         const dpy = c.XOpenDisplay(null).?;
-        try setRoot(dpy, output.items);
+        try setRoot(dpy, try output.toOwnedSliceSentinel(palloc, 0));
         _ = c.XCloseDisplay(dpy);
         output.clearRetainingCapacity();
         std.Thread.sleep(5 * std.time.ns_per_s);

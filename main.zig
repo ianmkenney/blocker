@@ -1,4 +1,5 @@
 const std = @import("std");
+const config = @import("config.zig");
 
 const c = @cImport({
     @cInclude("X11/Xlib.h");
@@ -9,12 +10,7 @@ const Executable = union(enum) {
     func: *const fn (*std.ArrayList(u8), std.mem.Allocator) error{OutOfMemory}!void,
 };
 
-fn blocker_example(output: *std.ArrayList(u8), allocator: std.mem.Allocator) !void {
-    const name = "Blocker example";
-    try output.appendSlice(allocator, name);
-}
-
-const Block = struct {
+pub const Block = struct {
     exec: Executable,
     output: std.ArrayList(u8),
     allocator: std.mem.Allocator = std.heap.page_allocator,
@@ -71,12 +67,7 @@ fn setRoot(dpy: *c.Display, msg: [:0]const u8) !void {
 pub fn main() !void {
     const palloc = std.heap.page_allocator;
 
-    var blks = [_]Block{
-        .init(.{ .cmd = &.{"date"} }),
-        .init(.{ .cmd = &.{ "acpi", "-b" } }),
-        .init(.{ .cmd = &.{ "acpi", "-t" } }),
-        .init(.{ .func = blocker_example }),
-    };
+    var blks = config.blks;
 
     var output: std.ArrayList(u8) = .empty;
     defer output.deinit(palloc);

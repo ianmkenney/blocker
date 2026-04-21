@@ -5,20 +5,31 @@ const c = @cImport({
     @cInclude("X11/Xlib.h");
 });
 
+const BlockerFuncError = error{OutOfMemory} || std.process.Child.SpawnError;
+
+pub const BlockerFunc = fn (*std.ArrayList(u8), std.mem.Allocator) BlockerFuncError!void;
 const Executable = union(enum) {
     cmd: []const []const u8,
-    func: *const fn (*std.ArrayList(u8), std.mem.Allocator) error{OutOfMemory}!void,
+    func: *const BlockerFunc,
 };
 
 pub const Block = struct {
     exec: Executable,
     output: std.ArrayList(u8),
     allocator: std.mem.Allocator = std.heap.page_allocator,
+    interval: usize = 1,
+    since_run: usize = 1,
 
     pub fn execute(
         self: *Block,
         allocator: std.mem.Allocator,
     ) !void {
+        if (self.since_run < self.interval) {
+            self.since_run = self.since_run + 1;
+            return;
+        }
+        defer self.since_run = 1;
+
         self.output.clearAndFree(self.allocator);
 
         switch (self.exec) {
@@ -47,8 +58,11 @@ pub const Block = struct {
         }
     }
 
-    pub fn init(exec: Executable) @This() {
+    pub fn init(exec: Executable, optional_interval: ?usize) Block {
         const output: std.ArrayList(u8) = .empty;
+
+        if (optional_interval) |interval|
+            return Block{ .exec = exec, .output = output, .interval = interval, .since_run = interval };
         return Block{ .exec = exec, .output = output };
     }
 };
@@ -72,7 +86,9 @@ pub fn main() !void {
     var output: std.ArrayList(u8) = .empty;
     defer output.deinit(palloc);
 
+    var iteration: usize = 1;
     while (true) {
+        iteration = iteration + 1;
         for (&blks, 0..) |*blk, i| {
             try blk.execute(palloc);
             try output.appendSlice(palloc, blk.output.items);
@@ -87,6 +103,6 @@ pub fn main() !void {
         try setRoot(dpy, try output.toOwnedSliceSentinel(palloc, 0));
         _ = c.XCloseDisplay(dpy);
         output.clearRetainingCapacity();
-        std.Thread.sleep(5 * std.time.ns_per_s);
+        std.Thread.sleep(1 * std.time.ns_per_s);
     }
 }
